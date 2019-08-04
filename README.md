@@ -11,3 +11,5 @@ github.com/shiena/ansicolor v0.0.0-20151119151921-a422bbe96644
 github.com/stretchr/testify v1.3.0
 
 github.com/tidwall/gjson v1.3.2
+
+## 有些事情，适可而止
