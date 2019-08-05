@@ -7,11 +7,15 @@ import (
 	"github.com/astaxie/beego"
 	"github.com/astaxie/beego/plugins/cors"
 	"github.com/tidwall/gjson"
+	"hash/crc32"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 /**
@@ -64,6 +68,8 @@ func (this *analysisController) Get() {
 		this.Data["json"] = huoShan(url)
 	} else if strings.Index(url, "kuaishou.com") != -1 || strings.Index(url, "gifshow.com") != -1 {
 		this.Data["json"] = kuaiShou(url)
+	} else if strings.Index(url, "ixigua.com") != -1 || strings.Index(url, "toutiaoimg.com") != -1 {
+		this.Data["json"] = xiGuaOrtouTiao(url)
 	} else {
 		this.Data["json"] = Echo(400, "暂不支持该平台", nil)
 	}
@@ -84,6 +90,8 @@ func (this *analysisController) Post() {
 		this.Data["json"] = huoShan(url)
 	} else if strings.Index(url, "kuaishou.com") != -1 || strings.Index(url, "gifshow.com") != -1 {
 		this.Data["json"] = kuaiShou(url)
+	} else if strings.Index(url, "ixigua.com") != -1 || strings.Index(url, "toutiaoimg.com") != -1 {
+		this.Data["json"] = xiGuaOrtouTiao(url)
 	} else {
 		this.Data["json"] = Echo(400, "暂不支持该平台", nil)
 	}
@@ -255,8 +263,8 @@ func huoShan(url string) map[string]interface{} {
 		return Echo(400, "参数错误", nil)
 	}
 	respJson := gjson.Parse(json[0][1])
-	video_id := respJson.Get("video.uri").Str
-	cover := respJson.Get("video.cover.url_list.0").Str
+	video_id := respJson.Get("video.uri").String()
+	cover := respJson.Get("video.cover.url_list.0").String()
 	playAddr := HttpGetLocationUrl("http://hotsoon.snssdk.com/hotsoon/item/video/_playback/?video_id="+video_id, pc_ua)
 	if playAddr == "" {
 		return Echo(400, "解析错误", nil)
@@ -278,14 +286,43 @@ func kuaiShou(url string) map[string]interface{} {
 	sig := md5M(strings.ReplaceAll(param, "&", "") + string([]byte{50, 51, 99, 97, 97, 98, 48, 48, 51, 53, 54, 99}))
 	resp = HttpPost("http://api.gifshow.com/rest/n/photo/info", param+`&sig=`+sig, "application/x-www-form-urlencoded", "kwai-android")
 	respJson := gjson.Parse(resp)
-	text := respJson.Get("photos.0.caption").Str
-	cover := respJson.Get("photos.0.thumbnail_url").Str
-	playAddr := respJson.Get("photos.0.main_mv_url").Str
+	text := respJson.Get("photos.0.caption").String()
+	cover := respJson.Get("photos.0.thumbnail_url").String()
+	playAddr := respJson.Get("photos.0.main_mv_url").String()
 	if playAddr == "" {
 		return Echo(400, "解析错误", nil)
 	}
 	echoMap := make(map[string]interface{})
 	echoMap["text"] = text
+	echoMap["cover"] = cover
+	echoMap["playAddr"] = playAddr
+	return Echo(200, "", echoMap)
+}
+
+// 西瓜 or 头条(有水印)
+func xiGuaOrtouTiao(url string) map[string]interface{} {
+	resp := HttpGet(url, pc_ua)
+	vid := regexp.MustCompile(`"vid":"(.*?)"`).FindAllStringSubmatch(resp, -1)
+	if len(vid) < 1 || len(vid[0]) < 2 {
+		return Echo(400, "参数错误", nil)
+	}
+	rand.Seed(time.Now().UnixNano())
+	r := rand.Int()
+	parse_url := "/video/urls/v/1/toutiao/mp4/" + vid[0][1] + "?r=" + strconv.Itoa(r)
+	s := crc32.ChecksumIEEE([]byte(parse_url))
+	resp = HttpGet("http://i.snssdk.com"+parse_url+"&nobase64=true&s="+strconv.Itoa(int(s)), pc_ua)
+	respJson := gjson.Parse(resp)
+	fmt.Println(respJson.Get("code").String())
+	if respJson.Get("code").String() != "0" {
+		return Echo(400, respJson.Get("message").String(), nil)
+	}
+	cover := respJson.Get("data.poster_url").String()
+	playAddr := respJson.Get("data.video_list.video_3.main_url").String()
+	if playAddr == "" {
+		playAddr = respJson.Get("data.video_list.video_" + respJson.Get("total").String() + ".main_url").String()
+	}
+	echoMap := make(map[string]interface{})
+	echoMap["text"] = ""
 	echoMap["cover"] = cover
 	echoMap["playAddr"] = playAddr
 	return Echo(200, "", echoMap)
